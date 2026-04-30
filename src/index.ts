@@ -120,8 +120,9 @@ function buildRobotsTxtResponse(url: URL): Response {
 	return new Response(body, {
 		status: 200,
 		headers: {
-			"cache-control": "public, max-age=3600",
+			"cache-control": "no-store, max-age=0",
 			"content-type": "text/plain; charset=utf-8",
+			"x-llm-proxy": "robots",
 		},
 	});
 }
