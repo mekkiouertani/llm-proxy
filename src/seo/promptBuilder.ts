@@ -1,6 +1,12 @@
 import { extractBreadcrumbs, isHomePage } from "./pageExtractors";
 import type { SeoGenerationContext } from "./types";
 
+/**
+ * Costruisce l'esempio JSON-LD atteso in base al tipo pagina.
+ *
+ * Non lascio decidere liberamente al modello la struttura: homepage e pagine
+ * interne hanno shape diverse richieste dalla consegna.
+ */
 function buildJsonLdExample(
 	pageUrl: string,
 	breadcrumbs: Array<{ name: string; item: string }>,
@@ -43,6 +49,13 @@ function buildJsonLdExample(
 	];
 }
 
+/**
+ * Costruisce un prompt dinamico partendo da dati SERP e vincoli gia' calcolati.
+ *
+ * Le regole SEO non vengono "nascoste" in un prompt fisso: `seoRules.ts`
+ * decide prima cosa imporre, poi questo file compone il prompt verificabile.
+ * Se cambiano intento, CPC, volume o feature SERP, cambia anche il prompt.
+ */
 export function buildSeoPrompt(context: SeoGenerationContext): string {
 	const pageType = isHomePage(context.pageUrl) ? "homepage" : "internal-page";
 	const breadcrumbs = extractBreadcrumbs(context.pageUrl);
