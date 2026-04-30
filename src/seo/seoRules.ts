@@ -1,3 +1,4 @@
+import { isHomePage } from "./pageExtractors";
 import type { SeoConstraints, SerpData } from "./types";
 
 const ACTION_VERBS = ["Scopri", "Prova", "Ottieni", "Scegli", "Richiedi"];
@@ -6,14 +7,16 @@ export function deriveSeoConstraints(serp: SerpData): SeoConstraints {
 	const constraints: SeoConstraints = {
 		titlePattern: "Title naturale e leggibile, massimo 60 caratteri.",
 		descriptionPattern: "Description chiara, massimo 155 caratteri.",
-		jsonLdPattern: "JSON-LD base coerente con il tipo di pagina.",
+		jsonLdPattern: isHomePage(serp.url)
+			? 'JSON-LD: un oggetto WebSite con url, name, description e potentialAction di tipo SearchAction (target con parametro "s").'
+			: "JSON-LD: un oggetto BreadcrumbList con itemListElement ricavato dal percorso URL, e un oggetto WebPage con url, name, description.",
 		keywordPlacement: "Keyword usata in modo naturale.",
 		avoidDescriptionOpeningTerms: [],
 	};
 
 	if (serp.intent === "informational") {
 		constraints.titlePattern =
-			'Il title deve iniziare con una domanda oppure con "Come", "Cosa" o "Perche".';
+			'Il title deve iniziare con una domanda oppure con "Come", "Cosa" o "Perché".';
 	}
 
 	if (serp.intent === "transactional") {

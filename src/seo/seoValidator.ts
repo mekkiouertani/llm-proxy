@@ -1,4 +1,5 @@
 import { asArray, asRecord, asString, parseJsonObject } from "./jsonUtils";
+import { isHomePage } from "./pageExtractors";
 import type { GeneratedSeoMetadata, SeoConstraints, SerpData } from "./types";
 
 export function parseGeneratedSeoMetadata(
@@ -39,18 +40,35 @@ export function isSeoMetadataValid(
 	if (metadata.title.length < 10 || metadata.title.length > 70) return false;
 	if (metadata.description.length < 50 || metadata.description.length > 170) return false;
 
+	if (serp.intent === "informational" && !hasInformationalTitle(metadata.title)) return false;
 	if (serp.intent === "transactional" && !hasActionVerb(metadata.title)) return false;
 	if (serp.intent === "navigational" && !metadata.title.toLowerCase().startsWith("tuurbo")) {
 		return false;
 	}
 
-	if (serp.volume > 1000 && metadata.title.indexOf(serp.keyword) > 30) return false;
+	if (serp.volume > 1000) {
+		const keywordIdx = metadata.title.toLowerCase().indexOf(serp.keyword.toLowerCase());
+		if (keywordIdx === -1 || keywordIdx > 30) return false;
+	}
 
 	if (serp.cpc > 2 && hasAvoidedOpeningTerm(metadata.description, constraints)) {
 		return false;
 	}
 
-	return metadata.jsonLd.length > 0;
+	if (metadata.jsonLd.length === 0) return false;
+
+	const jsonLdTypes = metadata.jsonLd.map((obj) => asString(obj["@type"]) ?? "");
+	if (isHomePage(serp.url)) {
+		if (!jsonLdTypes.includes("WebSite")) return false;
+	} else {
+		if (!jsonLdTypes.some((t) => t === "BreadcrumbList" || t === "WebPage")) return false;
+	}
+
+	return true;
+}
+
+function hasInformationalTitle(title: string): boolean {
+	return /^(Come|Cosa|Perch[eé]|Chi|Quando|Dove|Quale|Quali)\b/i.test(title) || title.includes("?");
 }
 
 function hasActionVerb(title: string): boolean {

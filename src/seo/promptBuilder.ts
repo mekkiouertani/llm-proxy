@@ -1,6 +1,48 @@
 import { extractBreadcrumbs, isHomePage } from "./pageExtractors";
 import type { SeoGenerationContext } from "./types";
 
+function buildJsonLdExample(
+	pageUrl: string,
+	breadcrumbs: Array<{ name: string; item: string }>,
+): unknown[] {
+	if (isHomePage(pageUrl)) {
+		return [
+			{
+				"@context": "https://schema.org",
+				"@type": "WebSite",
+				url: pageUrl,
+				name: "string",
+				description: "string",
+				potentialAction: {
+					"@type": "SearchAction",
+					target: `${new URL(pageUrl).origin}/?s={search_term_string}`,
+					"query-input": "required name=search_term_string",
+				},
+			},
+		];
+	}
+
+	return [
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			itemListElement: breadcrumbs.map((b, i) => ({
+				"@type": "ListItem",
+				position: i + 1,
+				name: b.name,
+				item: b.item,
+			})),
+		},
+		{
+			"@context": "https://schema.org",
+			"@type": "WebPage",
+			url: pageUrl,
+			name: "string",
+			description: "string",
+		},
+	];
+}
+
 export function buildSeoPrompt(context: SeoGenerationContext): string {
 	const pageType = isHomePage(context.pageUrl) ? "homepage" : "internal-page";
 	const breadcrumbs = extractBreadcrumbs(context.pageUrl);
@@ -19,7 +61,7 @@ export function buildSeoPrompt(context: SeoGenerationContext): string {
 				ogUrl: context.pageUrl,
 				ogType: pageType === "homepage" ? "website" : "article",
 				canonical: context.pageUrl,
-				jsonLd: [{ "@context": "https://schema.org", "@type": "WebPage" }],
+				jsonLd: buildJsonLdExample(context.pageUrl, breadcrumbs),
 			},
 			null,
 			2,
