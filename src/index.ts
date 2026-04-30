@@ -95,21 +95,39 @@ async function enhanceHtmlWithSeo(
 	requestUrl: URL,
 ): Promise<Response> {
 	const contentType = originResponse.headers.get("content-type") ?? "";
+	const isSeoDebug = requestUrl.searchParams.get("debug") === "seo";
 
 	if (!originResponse.ok || !contentType.toLowerCase().includes("text/html")) {
+		if (isSeoDebug) {
+			return Response.json(
+				{
+					debug: "seo",
+					applied: false,
+					reason: !originResponse.ok ? "origin-not-ok" : "origin-not-html",
+					originStatus: originResponse.status,
+					originContentType: contentType || null,
+					originUrl,
+				},
+				{ status: 200 },
+			);
+		}
+
 		return originResponse;
 	}
 
 	const html = await originResponse.text();
 	const seo = await getSeoMetadata(env, originUrl, html);
 
-	if (requestUrl.searchParams.get("debug") === "seo") {
+	if (isSeoDebug) {
 		return Response.json({
+			debug: "seo",
+			applied: true,
 			metadata: seo.metadata,
 			cacheHit: seo.cacheHit,
 			serp: seo.serp,
 			constraints: seo.constraints,
 			prompt: seo.prompt,
+			hasKvBinding: Boolean(env.SEO_CACHE),
 		});
 	}
 

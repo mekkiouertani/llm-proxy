@@ -22,9 +22,11 @@ export async function getSeoMetadata(
 	pageUrl: string,
 	html: string,
 ): Promise<SeoResult> {
-	const cached = await getCachedSeoMetadata(env.SEO_CACHE, pageUrl);
 	const fallbackSerp = buildFallbackSerpData(pageUrl, html);
 	const fallbackConstraints = deriveSeoConstraints(fallbackSerp);
+	const cached = env.SEO_CACHE
+		? await getCachedSeoMetadata(env.SEO_CACHE, pageUrl)
+		: undefined;
 
 	if (cached) {
 		return {
@@ -63,7 +65,9 @@ export async function getSeoMetadata(
 		)) ??
 		buildFallbackSeoMetadata(pageUrl, html, serp);
 
-	await putCachedSeoMetadata(env.SEO_CACHE, pageUrl, generated, ttlSeconds);
+	if (env.SEO_CACHE) {
+		await putCachedSeoMetadata(env.SEO_CACHE, pageUrl, generated, ttlSeconds);
+	}
 
 	return {
 		metadata: generated,

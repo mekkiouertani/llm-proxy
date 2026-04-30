@@ -6,7 +6,7 @@
  * sparse nei moduli SEO.
  */
 export type Env = {
-	SEO_CACHE: KVNamespace;
+	SEO_CACHE?: KVNamespace;
 	DATAFORSEO_LOGIN?: string;
 	DATAFORSEO_PASSWORD?: string;
 	OPENAI_API_KEY?: string;
