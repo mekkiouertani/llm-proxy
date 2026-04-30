@@ -8,6 +8,8 @@
 import type { Env } from "./env";
 import { classifyRequest, stripLlmsSuffix } from "./llm/classifier";
 import { buildMarkdownPage } from "./llm/htmlToMarkdown";
+import { shouldPrerenderRequest } from "./prerender/crawlerPolicy";
+import { getPrerenderedHtml } from "./prerender/prerenderService";
 import { injectSeoMetadata } from "./seo/htmlSeoInjector";
 import { getSeoMetadata } from "./seo/seoService";
 
@@ -22,6 +24,8 @@ export default {
 		const classification = classifyRequest(request);
 		const requestUrl = new URL(request.url);
 		const debugMode = requestUrl.searchParams.get("debug")?.toLowerCase();
+		const shouldRenderMarkdown =
+			classification.reason === "debug-query" || classification.reason === "debug-path";
 
 		if (requestUrl.pathname === "/robots.txt") {
 			return buildRobotsTxtResponse(requestUrl);
@@ -31,6 +35,36 @@ export default {
 			? stripLlmsSuffix(requestUrl)
 			: requestUrl;
 		originUrl.searchParams.delete("debug");
+
+		const prerenderDecision = shouldPrerenderRequest(request, classification);
+		if (!shouldRenderMarkdown && prerenderDecision.shouldPrerender) {
+			const prerendered = await getPrerenderedHtml(env, originUrl.toString());
+
+			if (debugMode === "prerender") {
+				return Response.json({
+					debug: "prerender",
+					applied: Boolean(prerendered.html),
+					status: prerendered.status,
+					cacheHit: prerendered.cacheHit,
+					reason: prerenderDecision.reason,
+					matchedSignal: prerenderDecision.matchedSignal,
+					hasBrowserBinding: Boolean(env.BROWSER),
+					hasPrerenderCache: Boolean(env.PRERENDER_CACHE),
+				});
+			}
+
+			if (prerendered.html) {
+				return new Response(prerendered.html, {
+					status: 200,
+					headers: {
+						"cache-control": "public, max-age=300",
+						"content-type": "text/html; charset=utf-8",
+						"x-prerender-cache": prerendered.cacheHit ? "hit" : "miss",
+						"x-prerender-reason": prerenderDecision.reason,
+					},
+				});
+			}
+		}
 
 		// La URL debug viene rimappata alla pagina reale prima del fetch.
 		const originRequest = new Request(originUrl.toString(), request);
@@ -48,14 +82,14 @@ export default {
 		console.log(
 			JSON.stringify({
 				path: requestUrl.pathname,
-				llmMode: classification.shouldRenderMarkdown,
+				llmMode: shouldRenderMarkdown,
 				reason: classification.reason,
 				matchedSignal: classification.matchedSignal,
 				status: originResponse.status,
 			}),
 		);
 
-		if (!classification.shouldRenderMarkdown) {
+		if (!shouldRenderMarkdown) {
 			if (debugMode === "seo-ping") {
 				return Response.json({
 					debug: "seo-ping",
