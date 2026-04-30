@@ -6,6 +6,7 @@ Fa due cose:
 
 - **Livello 1**: riconosce crawler AI o debug manuale e restituisce una versione markdown pulita della pagina.
 - **Livello 2**: arricchisce le normali pagine HTML con tag SEO generati usando DataForSEO, OpenAI/Claude e cache KV.
+- **Livello 3**: serve ai crawler HTML prerenderizzato con JavaScript gia' eseguito tramite Browser Run.
 
 ## Worker Flow
 
@@ -14,8 +15,8 @@ request
   -> index.ts
   -> /robots.txt? risposta diretta valida
   -> classifier.ts
-  -> fetch pagina origine
-  -> se crawler/debug LLM: htmlToMarkdown.ts
+  -> se debug LLM esplicito: htmlToMarkdown.ts
+  -> se crawler reale: prerenderService.ts
   -> altrimenti: seoService.ts
   -> response
 ```
@@ -57,6 +58,7 @@ I risultati vengono salvati in KV per evitare chiamate LLM a ogni richiesta. Se 
 src/index.ts               entrypoint Worker
 src/llm/classifier.ts      classificazione crawler AI/debug/pass-through
 src/llm/htmlToMarkdown.ts  conversione HTML -> markdown
+src/prerender/*            Browser Run + KV per HTML prerenderizzato
 src/seo/seoService.ts      orchestrazione SEO, cache e fallback
 src/seo/seoRules.ts        regole condizionali della consegna 2
 src/seo/promptBuilder.ts   prompt dinamico per LLM
@@ -96,6 +98,13 @@ Binding KV richiesto:
 
 ```text
 SEO_CACHE
+PRERENDER_CACHE
+```
+
+Binding Browser Run richiesto:
+
+```text
+BROWSER
 ```
 
 Variabili non segrete sono in `wrangler.jsonc`:
@@ -103,6 +112,8 @@ Variabili non segrete sono in `wrangler.jsonc`:
 ```text
 SEO_CACHE_TTL_SECONDS
 SEO_GENERATION_TIMEOUT_MS
+PRERENDER_CACHE_TTL_SECONDS
+PRERENDER_TIMEOUT_MS
 SEO_TARGET_LANGUAGE
 SEO_TARGET_LOCATION_CODE
 OPENAI_MODEL
@@ -125,6 +136,14 @@ Livello 2:
 /?debug=seo-ping
 ```
 
+Livello 3:
+
+```text
+/?debug=prerender
+```
+
+Con un crawler reale o `?debug=prerender`, il Worker prova prima `PRERENDER_CACHE`; se manca cache usa Browser Run, salva HTML renderizzato e lo restituisce. Se il render fallisce, torna alla pagina originale.
+
 Controllo HTML:
 
 ```text
@@ -146,4 +165,5 @@ Cercare:
 - Il Worker e' stateless: lo stato SEO generato vive in KV.
 - DataForSEO guida il prompt con keyword, intento, volume, CPC, competitor e SERP feature.
 - OpenAI e' il provider primario; Claude e' fallback.
+- Browser Run viene usato solo per crawler/cache miss, mai per utenti normali.
 - `/robots.txt` viene servito dal Worker con direttive standard per evitare errori PageSpeed.
