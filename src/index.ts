@@ -25,7 +25,15 @@ export default {
 
 		// La URL debug viene rimappata alla pagina reale prima del fetch.
 		const originRequest = new Request(originUrl.toString(), request);
-		const originResponse = await fetch(originRequest);
+		let originResponse: Response;
+		try {
+			originResponse = await fetch(originRequest);
+		} catch {
+			return new Response("Origin unreachable.", {
+				status: 502,
+				headers: { "content-type": "text/plain; charset=utf-8" },
+			});
+		}
 
 		// Log compatto: basta a capire perche' una richiesta e' stata trasformata.
 		console.log(
