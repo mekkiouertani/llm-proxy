@@ -51,6 +51,20 @@ export default {
 		);
 
 		if (!classification.shouldRenderMarkdown) {
+			if (debugMode === "seo-ping") {
+				return Response.json({
+					debug: "seo-ping",
+					workerReached: true,
+					originUrl: originUrl.toString(),
+					originStatus: originResponse.status,
+					originContentType: originResponse.headers.get("content-type"),
+					hasKvBinding: Boolean(env.SEO_CACHE),
+					hasDataForSeoCredentials: Boolean(env.DATAFORSEO_LOGIN && env.DATAFORSEO_PASSWORD),
+					hasOpenAiKey: Boolean(env.OPENAI_API_KEY),
+					hasAnthropicKey: Boolean(env.ANTHROPIC_API_KEY),
+				});
+			}
+
 			return enhanceHtmlWithSeo(originResponse, env, originUrl.toString(), debugMode);
 		}
 
