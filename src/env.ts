@@ -11,6 +11,8 @@ export type Env = {
 	DATAFORSEO_PASSWORD?: string;
 	OPENAI_API_KEY?: string;
 	ANTHROPIC_API_KEY?: string;
+	OPENAI_MODEL?: string;
+	ANTHROPIC_MODEL?: string;
 	SEO_CACHE_TTL_SECONDS?: string;
 	SEO_GENERATION_TIMEOUT_MS?: string;
 	SEO_TARGET_LANGUAGE?: string;

@@ -3,6 +3,7 @@ import type { GeneratedSeoMetadata } from "./types";
 
 type LlmClientInput = {
 	apiKey?: string;
+	model: string;
 	prompt: string;
 	pageUrl: string;
 	timeoutMs: number;
@@ -25,14 +26,17 @@ export async function generateWithOpenAi(
 				"content-type": "application/json",
 			},
 			body: JSON.stringify({
-				model: "gpt-5.2",
+				model: input.model,
 				input: input.prompt,
+				max_output_tokens: 900,
 			}),
 		},
 		input.timeoutMs,
 	);
 
-	if (!response.ok) return undefined;
+	if (!response.ok) {
+		throw new Error(`OpenAI HTTP ${response.status}: ${await response.text()}`);
+	}
 
 	const payload = await response.json();
 	const text = extractOpenAiText(payload);
@@ -54,8 +58,8 @@ export async function generateWithAnthropic(
 				"content-type": "application/json",
 			},
 			body: JSON.stringify({
-				model: "claude-sonnet-4-20250514",
-				max_tokens: 1200,
+				model: input.model,
+				max_tokens: 900,
 				messages: [
 					{
 						role: "user",
@@ -67,7 +71,9 @@ export async function generateWithAnthropic(
 		input.timeoutMs,
 	);
 
-	if (!response.ok) return undefined;
+	if (!response.ok) {
+		throw new Error(`Anthropic HTTP ${response.status}: ${await response.text()}`);
+	}
 
 	const payload = await response.json();
 	const text = extractAnthropicText(payload);

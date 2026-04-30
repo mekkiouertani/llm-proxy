@@ -12,8 +12,14 @@ export function extractKeyword(html: string): string {
 	const keywords = findMetaContent(html, "keywords");
 	if (keywords) return cleanText(keywords.split(",")[0] ?? keywords);
 
+	const heading = findTagInnerHtml(html, "h1");
+	if (heading) return simplifyKeyword(cleanText(heading));
+
+	const description = findMetaContent(html, "description");
+	if (description) return simplifyKeyword(cleanText(description));
+
 	const title = extractTitle(html);
-	return title.split(/\s+/).slice(0, 4).join(" ");
+	return simplifyKeyword(title);
 }
 
 export function isHomePage(url: string): boolean {
@@ -92,4 +98,14 @@ function decodeHtmlEntities(value: string): string {
 
 function toTitleCase(value: string): string {
 	return value.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function simplifyKeyword(value: string): string {
+	return value
+		.replace(/[|—–-].*$/u, "")
+		.split(/\s+/)
+		.filter((token) => token.length > 2)
+		.slice(0, 5)
+		.join(" ")
+		.trim();
 }

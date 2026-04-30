@@ -41,7 +41,7 @@ export async function getSeoMetadata(
 		};
 	}
 
-	const timeoutMs = getNumberEnv(env.SEO_GENERATION_TIMEOUT_MS, 3500);
+	const timeoutMs = getNumberEnv(env.SEO_GENERATION_TIMEOUT_MS, 12000);
 	const ttlSeconds = getNumberEnv(env.SEO_CACHE_TTL_SECONDS, 86400);
 	const locationCode = getNumberEnv(env.SEO_TARGET_LOCATION_CODE, 2380);
 	const languageCode = env.SEO_TARGET_LANGUAGE ?? "it";
@@ -69,6 +69,7 @@ export async function getSeoMetadata(
 
 	const openAiResult = await safeGenerateWithOpenAi(
 		env.OPENAI_API_KEY,
+		env.OPENAI_MODEL ?? "gpt-4.1-mini",
 		prompt,
 		pageUrl,
 		timeoutMs,
@@ -81,6 +82,7 @@ export async function getSeoMetadata(
 		? { status: "skipped-openai-valid", metadata: undefined }
 		: await safeGenerateWithAnthropic(
 				env.ANTHROPIC_API_KEY,
+				env.ANTHROPIC_MODEL ?? "claude-sonnet-4-5",
 				prompt,
 				pageUrl,
 				timeoutMs,
@@ -140,6 +142,7 @@ async function safeFetchSerpData(
 
 async function safeGenerateWithOpenAi(
 	apiKey: string | undefined,
+	model: string,
 	prompt: string,
 	pageUrl: string,
 	timeoutMs: number,
@@ -151,7 +154,7 @@ async function safeGenerateWithOpenAi(
 	}
 
 	try {
-		const metadata = await generateWithOpenAi({ apiKey, prompt, pageUrl, timeoutMs });
+		const metadata = await generateWithOpenAi({ apiKey, model, prompt, pageUrl, timeoutMs });
 		if (!metadata) return { status: "empty-or-unparseable-response" };
 		return isSeoMetadataValid(metadata, serp, constraints)
 			? { status: "ok", metadata }
@@ -164,6 +167,7 @@ async function safeGenerateWithOpenAi(
 
 async function safeGenerateWithAnthropic(
 	apiKey: string | undefined,
+	model: string,
 	prompt: string,
 	pageUrl: string,
 	timeoutMs: number,
@@ -175,7 +179,7 @@ async function safeGenerateWithAnthropic(
 	}
 
 	try {
-		const metadata = await generateWithAnthropic({ apiKey, prompt, pageUrl, timeoutMs });
+		const metadata = await generateWithAnthropic({ apiKey, model, prompt, pageUrl, timeoutMs });
 		if (!metadata) return { status: "empty-or-unparseable-response" };
 		return isSeoMetadataValid(metadata, serp, constraints)
 			? { status: "ok", metadata }

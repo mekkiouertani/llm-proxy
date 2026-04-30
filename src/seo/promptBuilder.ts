@@ -49,6 +49,6 @@ export function buildSeoPrompt(context: SeoGenerationContext): string {
 		`- Termini da evitare nei primi 10 token della description: ${context.constraints.avoidDescriptionOpeningTerms.join(", ") || "nessuno"}`,
 		"",
 		"HTML pagina, da usare solo come contesto:",
-		context.html.slice(0, 6000),
+		context.html.slice(0, 2500),
 	].join("\n");
 }
