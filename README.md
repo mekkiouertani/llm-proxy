@@ -1,106 +1,182 @@
 # LLM Proxy Worker
 
-Cloudflare Worker che intercetta richieste verso pagine HTML e restituisce una versione markdown pulita quando il client e' un crawler AI o quando il debug e' forzato.
+Cloudflare Worker che intercetta le richieste del sito e applica due livelli:
 
-L'obiettivo e' rendere lo stesso sito piu' leggibile da modelli come ChatGPT, Claude o Perplexity senza chiedere al crawler di conoscere rotte speciali.
+- **Livello 1**: serve una versione markdown pulita ai crawler AI.
+- **Livello 2**: migliora la SEO tecnica delle pagine HTML con metadata generati da DataForSEO + LLM.
 
-## Come Funziona
+La scelta di usare un Worker permette di intervenire sulle risposte senza modificare il repository del sito origine.
 
-Il Worker riceve ogni richiesta e la classifica:
-
-1. `?debug=llm` forza sempre la modalita' markdown.
-2. `{path}/llms` forza la modalita' markdown per la pagina corrispondente.
-3. User-Agent noti come `GPTBot`, `ClaudeBot` o `PerplexityBot` ricevono markdown.
-4. Header di purpose espliciti come `ai` o `llm` sono usati come segnale secondario.
-5. Browser e client ambigui ricevono la pagina originale.
-
-Quando la modalita' markdown e' attiva, il Worker recupera la pagina originale, verifica che sia HTML, estrae metadata e contenuto rilevante, poi restituisce `text/markdown`.
-
-Quando la modalita' markdown non e' attiva, il Worker applica anche il livello SEO:
-
-1. legge la cache KV per la URL;
-2. se manca cache, recupera dati SERP da DataForSEO;
-3. applica nel codice le regole su intento, CPC, SERP feature e volume;
-4. genera un prompt dinamico;
-5. usa OpenAI come provider primario;
-6. usa Claude come fallback se OpenAI fallisce o produce output non valido;
-7. salva il risultato in KV;
-8. inietta title, description, Open Graph, canonical e JSON-LD nell'HTML.
-
-Esempi:
+## Flusso Generale
 
 ```text
-/about?debug=llm -> converte /about in markdown
-/about/llms      -> converte /about in markdown
-/about?debug=seo -> mostra metadata, SERP, vincoli e prompt generato
-/style.css       -> pass-through, non viene convertito
+request
+  -> Cloudflare Worker
+  -> gestione /robots.txt se richiesto
+  -> classificazione client
+  -> fetch pagina origine
+  -> se crawler AI/debug LLM: HTML -> markdown
+  -> altrimenti: SEO cache/generation -> injection HTML
+  -> response
 ```
 
-## Output Markdown
+Il file principale e' `src/index.ts`: fa da regista, ma delega la logica specifica ai moduli `llm` e `seo`.
 
-La risposta contiene:
+## Livello 1: Markdown Per Crawler AI
 
-- titolo pagina;
-- URL canonico;
-- description;
-- keyword;
-- last-modified;
-- blocco aziendale richiesto dalla traccia;
-- contenuto convertito: heading, paragrafi, liste, link e immagini.
+Obiettivo: quando un crawler AI visita una pagina, deve ricevere testo strutturato e pulito invece di HTML/CSS/JS.
 
-Elementi come navigazione, footer, script, style, form, banner e cookie UI vengono scartati per ridurre rumore e token inutili.
+Il Worker decide se attivare questa modalita' in `src/llm/classifier.ts`, con priorita' esplicita:
 
-## Requisiti Coperti
+1. `?debug=llm`, utile per test manuale;
+2. `{path}/llms`, rotta alternativa richiesta dalla consegna;
+3. User-Agent noti come `GPTBot`, `ClaudeBot`, `PerplexityBot`;
+4. header di purpose espliciti come `ai` o `llm`;
+5. fallback conservativo: pagina HTML normale.
 
-- Intercettazione trasparente delle richieste senza obbligare il crawler a usare endpoint speciali.
-- Output markdown con metadata iniziali nel formato richiesto.
-- Conversione di contenuti utili: titoli, paragrafi, liste, link e immagini con testo alternativo.
-- Scarto di rumore non utile ai modelli: navigazione, footer, cookie banner, script e decorazioni.
-- Rotta alternativa di test con `{path}/llms`.
-- Query di test con `?debug=llm`.
-- Classificazione crawler documentata e ordinata per priorita'.
-- Generazione SEO tag e JSON-LD senza toccare il repo origine.
-- Prompt dinamico che cambia in base ai dati DataForSEO.
-- Storage KV per evitare chiamate LLM a ogni richiesta.
-- Fallback se DataForSEO, OpenAI o Claude falliscono.
+Ho scelto un fallback conservativo per non rompere browser o client ambigui. Se non sono ragionevolmente sicuro che sia un crawler AI, non cambio la risposta.
 
-## Scelte Tecniche
+Quando il ramo LLM e' attivo, `src/llm/htmlToMarkdown.ts`:
 
-La soluzione e' stateless: non usa DB, KV o memoria locale per dati critici. Questo rende retry e richieste duplicate naturalmente sicuri, perche' la trasformazione non crea side effect.
+- estrae title, canonical URL, description, keyword e last-modified;
+- rimuove navigazione, footer, cookie banner, script, style e decorazioni;
+- converte heading, paragrafi, liste, link e immagini in markdown;
+- restituisce `text/markdown`.
 
-La classificazione e' conservativa: se un client e' ambiguo, riceve l'HTML normale. Ho scelto questa priorita' per evitare di rompere l'esperienza browser e rendere il comportamento facile da spiegare in review.
+Test:
 
-Il converter HTML e' volutamente minimale. Non esegue JavaScript e non fa crawling ricorsivo: lavora solo sull'HTML gia' restituito dall'origine. In produzione aggiungerei cache, metriche dedicate e un parser piu' completo per siti con markup molto rumoroso.
+```text
+/about?debug=llm
+/about/llms
+```
 
-Per il livello SEO uso OpenAI come generatore primario e Claude come fallback/reviewer. Non li chiamo entrambi sempre: sarebbe piu' costoso e lento. Il pattern scelto e' primary + fallback, con validazione locale prima di salvare in cache.
+## Livello 2: SEO Tecnico Con AI
 
-## Edge Case E Limiti
+Obiettivo: generare e iniettare automaticamente tag SEO senza toccare il repo origine:
 
-- Se la risposta origine non e' HTML, il Worker fa pass-through.
-- Se il client e' ambiguo, il Worker fa pass-through per non alterare il browser.
-- Se l'origine risponde con errore durante una richiesta markdown, viene restituito un errore chiaro.
-- La lista di crawler AI non e' definitiva: e' pensata per essere estesa.
-- Pagine renderizzate quasi interamente via JavaScript possono produrre markdown povero, perche' il Worker non esegue JS.
+- `<title>`;
+- `<meta name="description">`;
+- Open Graph: `og:title`, `og:description`, `og:url`, `og:type`;
+- `<link rel="canonical">`;
+- JSON-LD: `WebSite` + `SearchAction` in homepage, `BreadcrumbList` sulle pagine interne.
 
-## Production Readiness
+Il flusso vive soprattutto in `src/seo/seoService.ts`:
 
-Per un livello production aggiungerei:
+```text
+HTML page
+  -> cerca metadata in KV
+  -> se cache miss: DataForSEO
+  -> regole condizionali nel codice
+  -> prompt dinamico
+  -> OpenAI primary
+  -> Claude fallback
+  -> fallback locale se qualcosa fallisce
+  -> salva in KV
+  -> inject HTML
+```
 
-- invalidazione cache piu' raffinata usando `ETag` o `Last-Modified`;
-- metriche su richieste markdown, pass-through, errori origine e crawler rilevati;
-- lista crawler configurabile senza deploy;
-- parser HTML piu' robusto per markup complesso;
-- allowlist dei domini origine se il Worker venisse usato come proxy generale.
+### Perche' KV
+
+La consegna dice che chiamare l'LLM a ogni richiesta HTTP e' un errore architetturale. Per questo i metadata generati vengono salvati in Cloudflare KV con chiave per URL.
+
+```text
+prima richiesta nuova  -> DataForSEO + LLM + KV put
+richieste successive   -> KV get + injection HTML
+```
+
+Questo riduce latenza, costo e rischio di rate limit.
+
+### Perche' OpenAI + Claude
+
+OpenAI e' usato come provider primario. Claude e' usato come fallback se OpenAI fallisce, va in timeout o produce un output non valido.
+
+Non chiamo entrambi sempre: aumenterebbe costi e latenza. Il pattern scelto e' `primary + fallback`, con validazione locale prima di salvare in cache.
+
+### Regole SEO Nel Codice
+
+Le regole della consegna non sono scritte come prompt statico. Sono trasformate in vincoli da `src/seo/seoRules.ts`:
+
+- intent informational: title in forma di domanda o con "Come", "Cosa", "Perche";
+- intent transactional: title con verbo d'azione;
+- intent navigational: brand in prima posizione;
+- CPC alto: description differenziata dai primi competitor SERP;
+- featured snippet: title come risposta diretta;
+- knowledge panel: JSON-LD piu' ricco;
+- volume alto: keyword nel title entro i primi 30 caratteri.
+
+Poi `src/seo/promptBuilder.ts` costruisce un prompt dinamico usando dati DataForSEO e vincoli calcolati. Due pagine con dati diversi generano prompt diversi.
+
+### Fallback
+
+Se DataForSEO non risponde, se OpenAI/Claude falliscono, o se il timeout viene superato, il Worker serve comunque la pagina.
+
+Il fallback locale usa title/meta/H1/paragrafi presenti nell'HTML e genera metadata validi ma meno ottimizzati. Questo evita pagine rotte e rende il sistema resiliente.
+
+Debug:
+
+```text
+/?debug=seo
+/?debug=seo-ping
+```
+
+`?debug=seo` mostra metadata, SERP, vincoli, prompt e stato dei provider. `?debug=seo-ping` verifica se il Worker vede KV e secrets.
+
+## Robots.txt
+
+Il Worker serve anche `/robots.txt` per evitare direttive non standard che PageSpeed segnala come errore.
+
+Risposta generata:
+
+```txt
+User-agent: *
+Allow: /
+
+Sitemap: https://www.tuurbo-trainer.com/sitemap.xml
+```
 
 ## Struttura
 
 ```text
-src/index.ts              entrypoint Worker e orchestrazione HTTP
-src/llm/classifier.ts     classificazione crawler/debug/pass-through
-src/llm/htmlToMarkdown.ts estrazione metadata e conversione markdown
-src/seo/seoService.ts     orchestrazione cache/DataForSEO/LLM/fallback
-src/seo/seoRules.ts       regole condizionali SEO richieste dalla traccia
-src/seo/htmlSeoInjector.ts iniezione tag SEO e JSON-LD nell'HTML
+src/index.ts               entrypoint Worker e orchestrazione HTTP
+src/env.ts                 binding Cloudflare e variabili ambiente
+src/llm/classifier.ts      classificazione crawler/debug/pass-through
+src/llm/htmlToMarkdown.ts  conversione HTML -> markdown
+src/seo/seoService.ts      cache, DataForSEO, LLM, fallback
+src/seo/seoRules.ts        regole condizionali SEO
+src/seo/promptBuilder.ts   prompt dinamico per LLM
+src/seo/htmlSeoInjector.ts injection tag SEO e JSON-LD
+src/seo/dataForSeoClient.ts client DataForSEO
+src/seo/llmClients.ts      client OpenAI e Claude
+```
+
+## Variabili E Secrets
+
+In locale copiare `.dev.vars.example` in `.dev.vars`.
+
+Secrets Cloudflare:
+
+```bash
+npx wrangler secret put DATAFORSEO_LOGIN
+npx wrangler secret put DATAFORSEO_PASSWORD
+npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put ANTHROPIC_API_KEY
+```
+
+Binding KV:
+
+```text
+SEO_CACHE
+```
+
+Variabili non segrete configurate in `wrangler.jsonc`:
+
+```text
+SEO_CACHE_TTL_SECONDS
+SEO_GENERATION_TIMEOUT_MS
+SEO_TARGET_LANGUAGE
+SEO_TARGET_LOCATION_CODE
+OPENAI_MODEL
+ANTHROPIC_MODEL
 ```
 
 ## Comandi
@@ -111,34 +187,58 @@ npm run dev
 npm run deploy
 ```
 
-Verifiche utili:
+Verifiche:
 
 ```bash
 npx tsc --noEmit
 npx wrangler deploy --dry-run
 ```
 
-## Variabili E Secrets
+## Come Verificare
 
-In locale copiare `.dev.vars.example` in `.dev.vars` e inserire valori reali.
+Livello 1:
 
-In produzione usare secrets Cloudflare:
-
-```bash
-npx wrangler secret put DATAFORSEO_LOGIN
-npx wrangler secret put DATAFORSEO_PASSWORD
-npx wrangler secret put OPENAI_API_KEY
-npx wrangler secret put ANTHROPIC_API_KEY
+```text
+/?debug=llm
+/llms
 ```
 
-La cache SEO usa il binding KV `SEO_CACHE` configurato in `wrangler.jsonc`.
+Livello 2:
 
-## Come Presentarla
+```text
+/?debug=seo&v=test-1
+/?debug=seo-ping
+```
 
-La frase breve e' questa: il Worker si comporta come un middleware stateless che serve HTML ai browser e markdown ai crawler AI. La parte importante non e' avere una lista infinita di bot, ma una classificazione esplicita, prioritaria ed estendibile.
+HTML reale:
 
-In review evidenzierei tre trade-off:
+```text
+view-source:https://www.tuurbo-trainer.com/
+```
 
-- ho scelto pass-through conservativo per non rompere i browser;
-- ho evitato persistenza e cache per mantenere la soluzione semplice e idempotente nel livello richiesto;
-- ho tenuto il parser piccolo per consegnare una soluzione spiegabile, dichiarando chiaramente cosa migliorerei in produzione.
+Cercare:
+
+```html
+<title>
+<meta name="description">
+<meta property="og:title">
+<link rel="canonical">
+<script type="application/ld+json">
+```
+
+## Trade-Off
+
+- Ho preferito un Worker stateless: meno infrastruttura e deploy piu' semplice.
+- Ho usato KV per i risultati SEO: abbastanza semplice per cache per URL, senza introdurre DB.
+- Ho evitato parsing HTML pesante: soluzione piu' piccola, ma meno adatta a markup molto complesso.
+- Ho lasciato DataForSEO non bloccante: se non trova dati, il sistema usa fallback SERP e continua.
+- Ho scelto timeout e fallback per non sacrificare disponibilita' della pagina.
+
+## Cosa Migliorerei In Produzione
+
+- invalidazione cache basata su `ETag` o `Last-Modified`;
+- metriche dedicate per DataForSEO, OpenAI, Claude, fallback e cache hit;
+- allowlist dei domini origine;
+- parser HTML piu' robusto;
+- gestione sitemap reale se il sito ne espone una;
+- lista crawler configurabile senza deploy.
