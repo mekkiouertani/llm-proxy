@@ -5,8 +5,11 @@
  * pagina origine e decido se restituirla com'e' o convertirla in markdown.
  * La logica specifica vive nei moduli `llm`, cosi' il flusso resta leggibile.
  */
+import type { Env } from "./env";
 import { classifyRequest, stripLlmsSuffix } from "./llm/classifier";
 import { buildMarkdownPage } from "./llm/htmlToMarkdown";
+import { injectSeoMetadata } from "./seo/htmlSeoInjector";
+import { getSeoMetadata } from "./seo/seoService";
 
 export default {
 	/**
@@ -15,7 +18,7 @@ export default {
 	 * Browser e asset passano quasi invariati; crawler AI e debug route ricevono
 	 * una rappresentazione markdown della stessa pagina.
 	 */
-	async fetch(request: Request): Promise<Response> {
+	async fetch(request: Request, env: Env): Promise<Response> {
 		const classification = classifyRequest(request);
 		const requestUrl = new URL(request.url);
 		const originUrl = classification.reason === "debug-path"
@@ -47,7 +50,7 @@ export default {
 		);
 
 		if (!classification.shouldRenderMarkdown) {
-			return originResponse;
+			return enhanceHtmlWithSeo(originResponse, env, originUrl.toString(), requestUrl);
 		}
 
 		const contentType = originResponse.headers.get("content-type") ?? "";
@@ -84,3 +87,41 @@ export default {
 		});
 	},
 };
+
+async function enhanceHtmlWithSeo(
+	originResponse: Response,
+	env: Env,
+	originUrl: string,
+	requestUrl: URL,
+): Promise<Response> {
+	const contentType = originResponse.headers.get("content-type") ?? "";
+
+	if (!originResponse.ok || !contentType.toLowerCase().includes("text/html")) {
+		return originResponse;
+	}
+
+	const html = await originResponse.text();
+	const seo = await getSeoMetadata(env, originUrl, html);
+
+	if (requestUrl.searchParams.get("debug") === "seo") {
+		return Response.json({
+			metadata: seo.metadata,
+			cacheHit: seo.cacheHit,
+			serp: seo.serp,
+			constraints: seo.constraints,
+			prompt: seo.prompt,
+		});
+	}
+
+	const enhancedHtml = injectSeoMetadata(html, seo.metadata);
+	const headers = new Headers(originResponse.headers);
+	headers.set("content-type", "text/html; charset=utf-8");
+	headers.set("x-seo-source", seo.metadata.source);
+	headers.set("x-seo-cache", seo.cacheHit ? "hit" : "miss");
+
+	return new Response(enhancedHtml, {
+		status: originResponse.status,
+		statusText: originResponse.statusText,
+		headers,
+	});
+}

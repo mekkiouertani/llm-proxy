@@ -1,6 +1,3 @@
-# Copia questo file in `.dev.vars` per `npx wrangler dev`.
-# Non committare mai `.dev.vars` con valori reali.
-
 DATAFORSEO_LOGIN=your-dataforseo-login
 DATAFORSEO_PASSWORD=your-dataforseo-password
 OPENAI_API_KEY=sk-your-openai-key
@@ -11,3 +8,5 @@ SEO_CACHE_TTL_SECONDS=86400
 SEO_GENERATION_TIMEOUT_MS=3500
 SEO_TARGET_LANGUAGE=it
 SEO_TARGET_LOCATION_CODE=2380
+
+# Facoltativo: `?debug=seo` mostra metadata, vincoli e prompt generato.
