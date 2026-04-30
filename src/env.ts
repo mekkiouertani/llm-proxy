@@ -7,6 +7,8 @@
  */
 export type Env = {
 	SEO_CACHE?: KVNamespace;
+	PRERENDER_CACHE?: KVNamespace;
+	BROWSER?: Fetcher;
 	DATAFORSEO_LOGIN?: string;
 	DATAFORSEO_PASSWORD?: string;
 	OPENAI_API_KEY?: string;
@@ -15,6 +17,8 @@ export type Env = {
 	ANTHROPIC_MODEL?: string;
 	SEO_CACHE_TTL_SECONDS?: string;
 	SEO_GENERATION_TIMEOUT_MS?: string;
+	PRERENDER_CACHE_TTL_SECONDS?: string;
+	PRERENDER_TIMEOUT_MS?: string;
 	SEO_TARGET_LANGUAGE?: string;
 	SEO_TARGET_LOCATION_CODE?: string;
 };
