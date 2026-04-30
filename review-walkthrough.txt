@@ -1,0 +1,36 @@
+PROMEMORIA PER LA REVIEW TECNICA
+
+1. Comprensione iniziale
+- L'obiettivo e' servire una versione markdown delle pagine ai crawler AI.
+- Il Worker deve intercettare richieste normali, classificare il client e decidere se trasformare o fare pass-through.
+- La rotta `/llms` e la query `?debug=llm` servono per test manuale.
+
+2. Scelte tecniche principali
+- Worker stateless in TypeScript: niente persistenza perche' la trasformazione non crea side effect.
+- Logica separata dal routing: classificazione e conversione vivono in moduli dedicati.
+- Classificazione prioritizzata: debug esplicito, user-agent AI, segnali header, fallback browser.
+- Conversione HTML minimale ma leggibile: metadata, heading, paragrafi, liste, link e immagini.
+
+3. Trade-off
+- Non uso un crawler ricorsivo: riduce costi, latenza e complessita'.
+- Non uso cache nel livello 1: soluzione piu' semplice; in produzione valuterei cache per URL.
+- La lista bot non e' esaustiva: e' estendibile e documentata nei commenti.
+
+4. Ordine di implementazione
+- Prima docs e spec breve.
+- Poi classificatore.
+- Poi fetch origine e conversione markdown.
+- Poi error handling, logging e verifica.
+
+5. Edge case gestiti
+- Browser normali: pass-through.
+- Debug forzato: sempre markdown flow.
+- Risposte non HTML: pass-through.
+- Origine non raggiungibile: errore chiaro per crawler/debug.
+- Retry: sicuri perche' non c'e' stato mutabile.
+
+6. Miglioramenti futuri
+- Cache condivisa con ETag/Last-Modified.
+- Parser HTML piu' completo per siti molto rumorosi.
+- Configurazione esterna della lista crawler.
+- Test automatici mirati sui casi di classificazione.
