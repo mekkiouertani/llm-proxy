@@ -22,6 +22,11 @@ export default {
 		const classification = classifyRequest(request);
 		const requestUrl = new URL(request.url);
 		const debugMode = requestUrl.searchParams.get("debug")?.toLowerCase();
+
+		if (requestUrl.pathname === "/robots.txt") {
+			return buildRobotsTxtResponse(requestUrl);
+		}
+
 		const originUrl = classification.reason === "debug-path"
 			? stripLlmsSuffix(requestUrl)
 			: requestUrl;
@@ -102,6 +107,24 @@ export default {
 		});
 	},
 };
+
+function buildRobotsTxtResponse(url: URL): Response {
+	const body = [
+		"User-agent: *",
+		"Allow: /",
+		"",
+		`Sitemap: ${url.origin}/sitemap.xml`,
+		"",
+	].join("\n");
+
+	return new Response(body, {
+		status: 200,
+		headers: {
+			"cache-control": "public, max-age=3600",
+			"content-type": "text/plain; charset=utf-8",
+		},
+	});
+}
 
 async function enhanceHtmlWithSeo(
 	originResponse: Response,
