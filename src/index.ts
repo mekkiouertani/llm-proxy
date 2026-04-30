@@ -21,6 +21,7 @@ export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const classification = classifyRequest(request);
 		const requestUrl = new URL(request.url);
+		const debugMode = requestUrl.searchParams.get("debug")?.toLowerCase();
 		const originUrl = classification.reason === "debug-path"
 			? stripLlmsSuffix(requestUrl)
 			: requestUrl;
@@ -50,7 +51,7 @@ export default {
 		);
 
 		if (!classification.shouldRenderMarkdown) {
-			return enhanceHtmlWithSeo(originResponse, env, originUrl.toString(), requestUrl);
+			return enhanceHtmlWithSeo(originResponse, env, originUrl.toString(), debugMode);
 		}
 
 		const contentType = originResponse.headers.get("content-type") ?? "";
@@ -92,10 +93,10 @@ async function enhanceHtmlWithSeo(
 	originResponse: Response,
 	env: Env,
 	originUrl: string,
-	requestUrl: URL,
+	debugMode: string | undefined,
 ): Promise<Response> {
 	const contentType = originResponse.headers.get("content-type") ?? "";
-	const isSeoDebug = requestUrl.searchParams.get("debug") === "seo";
+	const isSeoDebug = debugMode === "seo";
 
 	if (!originResponse.ok || !contentType.toLowerCase().includes("text/html")) {
 		if (isSeoDebug) {
@@ -134,6 +135,7 @@ async function enhanceHtmlWithSeo(
 	const enhancedHtml = injectSeoMetadata(html, seo.metadata);
 	const headers = new Headers(originResponse.headers);
 	headers.set("content-type", "text/html; charset=utf-8");
+	headers.set("x-llm-proxy", "seo-enhanced");
 	headers.set("x-seo-source", seo.metadata.source);
 	headers.set("x-seo-cache", seo.cacheHit ? "hit" : "miss");
 
