@@ -1,26 +1,62 @@
-import { fromHono } from "chanfana";
-import { Hono } from "hono";
-import { TaskCreate } from "./endpoints/taskCreate";
-import { TaskDelete } from "./endpoints/taskDelete";
-import { TaskFetch } from "./endpoints/taskFetch";
-import { TaskList } from "./endpoints/taskList";
+import { classifyRequest, stripLlmsSuffix } from "./llm/classifier";
+import { buildMarkdownPage } from "./llm/htmlToMarkdown";
 
-// Start a Hono app
-const app = new Hono<{ Bindings: Env }>();
+export default {
+	async fetch(request: Request): Promise<Response> {
+		const classification = classifyRequest(request);
+		const requestUrl = new URL(request.url);
+		const originUrl = classification.reason === "debug-path"
+			? stripLlmsSuffix(requestUrl)
+			: requestUrl;
+		originUrl.searchParams.delete("debug");
 
-// Setup OpenAPI registry
-const openapi = fromHono(app, {
-	docs_url: "/",
-});
+		const originRequest = new Request(originUrl.toString(), request);
+		const originResponse = await fetch(originRequest);
 
-// Register OpenAPI endpoints
-openapi.get("/api/tasks", TaskList);
-openapi.post("/api/tasks", TaskCreate);
-openapi.get("/api/tasks/:taskSlug", TaskFetch);
-openapi.delete("/api/tasks/:taskSlug", TaskDelete);
+		console.log(
+			JSON.stringify({
+				path: requestUrl.pathname,
+				llmMode: classification.shouldRenderMarkdown,
+				reason: classification.reason,
+				matchedSignal: classification.matchedSignal,
+				status: originResponse.status,
+			}),
+		);
 
-// You may also register routes for non OpenAPI directly on Hono
-// app.get('/test', (c) => c.text('Hono!'))
+		if (!classification.shouldRenderMarkdown) {
+			return originResponse;
+		}
 
-// Export the Hono app
-export default app;
+		const contentType = originResponse.headers.get("content-type") ?? "";
+
+		if (!contentType.toLowerCase().includes("text/html")) {
+			return originResponse;
+		}
+
+		if (!originResponse.ok) {
+			return new Response("Unable to fetch source page for LLM markdown.", {
+				status: 502,
+				headers: {
+					"content-type": "text/plain; charset=utf-8",
+				},
+			});
+		}
+
+		const html = await originResponse.text();
+		const markdown = buildMarkdownPage({
+			html,
+			sourceUrl: originUrl.toString(),
+			responseHeaders: originResponse.headers,
+		});
+
+		return new Response(markdown, {
+			status: 200,
+			headers: {
+				"cache-control": "public, max-age=300",
+				"content-type": "text/markdown; charset=utf-8",
+				"vary": "user-agent, purpose, sec-purpose, x-purpose, x-ai-purpose",
+				"x-llm-proxy-reason": classification.reason,
+			},
+		});
+	},
+};

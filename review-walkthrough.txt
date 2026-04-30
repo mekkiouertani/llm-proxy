@@ -20,7 +20,7 @@ PROMEMORIA PER LA REVIEW TECNICA
 - Prima docs e spec breve.
 - Poi classificatore.
 - Poi fetch origine e conversione markdown.
-- Poi error handling, logging e verifica.
+- Poi error handling, logging, rimozione template e verifica con typecheck/dry-run.
 
 5. Edge case gestiti
 - Browser normali: pass-through.
