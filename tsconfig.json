@@ -17,6 +17,7 @@
 		"noEmit": true,
 		"lib": ["es2024"],
 		"types": [
+			"@cloudflare/workers-types",
 			"@types/node"
 		]
 	},
