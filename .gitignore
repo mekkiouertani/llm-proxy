@@ -166,3 +166,7 @@ dist
 !.env.example
 .wrangler/
 soft-credit-1ca9/
+AGENTS.md
+docs/
+prompt.txt
+review-walkthrough.txt
