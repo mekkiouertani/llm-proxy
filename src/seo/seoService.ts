@@ -15,6 +15,7 @@ export type SeoResult = {
 	serp: SerpData;
 	constraints: SeoConstraints;
 	prompt?: string;
+	providerStatus: Record<string, string>;
 };
 
 export async function getSeoMetadata(
@@ -34,6 +35,9 @@ export async function getSeoMetadata(
 			cacheHit: true,
 			serp: fallbackSerp,
 			constraints: fallbackConstraints,
+			providerStatus: {
+				cache: "hit",
+			},
 		};
 	}
 
@@ -42,9 +46,19 @@ export async function getSeoMetadata(
 	const locationCode = getNumberEnv(env.SEO_TARGET_LOCATION_CODE, 2380);
 	const languageCode = env.SEO_TARGET_LANGUAGE ?? "it";
 
-	const serp =
-		(await safeFetchSerpData(env, pageUrl, html, languageCode, locationCode, timeoutMs)) ??
-		fallbackSerp;
+	const providerStatus: Record<string, string> = {
+		cache: "miss",
+	};
+	const serpResult = await safeFetchSerpData(
+		env,
+		pageUrl,
+		html,
+		languageCode,
+		locationCode,
+		timeoutMs,
+	);
+	providerStatus.dataForSeo = serpResult.status;
+	const serp = serpResult.serp ?? fallbackSerp;
 	const constraints = deriveSeoConstraints(serp);
 	const prompt = buildSeoPrompt({
 		pageUrl,
@@ -53,17 +67,33 @@ export async function getSeoMetadata(
 		constraints,
 	});
 
+	const openAiResult = await safeGenerateWithOpenAi(
+		env.OPENAI_API_KEY,
+		prompt,
+		pageUrl,
+		timeoutMs,
+		serp,
+		constraints,
+	);
+	providerStatus.openai = openAiResult.status;
+
+	const anthropicResult = openAiResult.metadata
+		? { status: "skipped-openai-valid", metadata: undefined }
+		: await safeGenerateWithAnthropic(
+				env.ANTHROPIC_API_KEY,
+				prompt,
+				pageUrl,
+				timeoutMs,
+				serp,
+				constraints,
+			);
+	providerStatus.anthropic = anthropicResult.status;
+
 	const generated =
-		(await safeGenerateWithOpenAi(env.OPENAI_API_KEY, prompt, pageUrl, timeoutMs, serp, constraints)) ??
-		(await safeGenerateWithAnthropic(
-			env.ANTHROPIC_API_KEY,
-			prompt,
-			pageUrl,
-			timeoutMs,
-			serp,
-			constraints,
-		)) ??
+		openAiResult.metadata ??
+		anthropicResult.metadata ??
 		buildFallbackSeoMetadata(pageUrl, html, serp);
+	providerStatus.finalSource = generated.source;
 
 	if (env.SEO_CACHE) {
 		await putCachedSeoMetadata(env.SEO_CACHE, pageUrl, generated, ttlSeconds);
@@ -75,6 +105,7 @@ export async function getSeoMetadata(
 		serp,
 		constraints,
 		prompt,
+		providerStatus,
 	};
 }
 
@@ -85,9 +116,13 @@ async function safeFetchSerpData(
 	languageCode: string,
 	locationCode: number,
 	timeoutMs: number,
-): Promise<SerpData | undefined> {
+): Promise<{ status: string; serp?: SerpData }> {
+	if (!env.DATAFORSEO_LOGIN || !env.DATAFORSEO_PASSWORD) {
+		return { status: "missing-credentials" };
+	}
+
 	try {
-		return await fetchSerpData({
+		const serp = await fetchSerpData({
 			login: env.DATAFORSEO_LOGIN,
 			password: env.DATAFORSEO_PASSWORD,
 			pageUrl,
@@ -96,9 +131,10 @@ async function safeFetchSerpData(
 			locationCode,
 			timeoutMs,
 		});
+		return serp ? { status: "ok", serp } : { status: "empty-response" };
 	} catch (error) {
 		console.warn("DataForSEO unavailable, using fallback SERP data", error);
-		return undefined;
+		return { status: "error-or-timeout" };
 	}
 }
 
@@ -109,13 +145,20 @@ async function safeGenerateWithOpenAi(
 	timeoutMs: number,
 	serp: SerpData,
 	constraints: SeoConstraints,
-): Promise<GeneratedSeoMetadata | undefined> {
+): Promise<{ status: string; metadata?: GeneratedSeoMetadata }> {
+	if (!apiKey) {
+		return { status: "missing-api-key" };
+	}
+
 	try {
 		const metadata = await generateWithOpenAi({ apiKey, prompt, pageUrl, timeoutMs });
-		return metadata && isSeoMetadataValid(metadata, serp, constraints) ? metadata : undefined;
+		if (!metadata) return { status: "empty-or-unparseable-response" };
+		return isSeoMetadataValid(metadata, serp, constraints)
+			? { status: "ok", metadata }
+			: { status: "invalid-output" };
 	} catch (error) {
 		console.warn("OpenAI SEO generation unavailable", error);
-		return undefined;
+		return { status: "error-or-timeout" };
 	}
 }
 
@@ -126,12 +169,19 @@ async function safeGenerateWithAnthropic(
 	timeoutMs: number,
 	serp: SerpData,
 	constraints: SeoConstraints,
-): Promise<GeneratedSeoMetadata | undefined> {
+): Promise<{ status: string; metadata?: GeneratedSeoMetadata }> {
+	if (!apiKey) {
+		return { status: "missing-api-key" };
+	}
+
 	try {
 		const metadata = await generateWithAnthropic({ apiKey, prompt, pageUrl, timeoutMs });
-		return metadata && isSeoMetadataValid(metadata, serp, constraints) ? metadata : undefined;
+		if (!metadata) return { status: "empty-or-unparseable-response" };
+		return isSeoMetadataValid(metadata, serp, constraints)
+			? { status: "ok", metadata }
+			: { status: "invalid-output" };
 	} catch (error) {
 		console.warn("Anthropic SEO generation unavailable", error);
-		return undefined;
+		return { status: "error-or-timeout" };
 	}
 }

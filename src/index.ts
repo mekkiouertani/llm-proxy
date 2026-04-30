@@ -142,6 +142,7 @@ async function enhanceHtmlWithSeo(
 			serp: seo.serp,
 			constraints: seo.constraints,
 			prompt: seo.prompt,
+			providerStatus: seo.providerStatus,
 			hasKvBinding: Boolean(env.SEO_CACHE),
 		});
 	}
