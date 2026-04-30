@@ -1,7 +1,20 @@
+/**
+ * Entry point del Cloudflare Worker.
+ *
+ * Qui resta solo l'orchestrazione HTTP: classifico la request, recupero la
+ * pagina origine e decido se restituirla com'e' o convertirla in markdown.
+ * La logica specifica vive nei moduli `llm`, cosi' il flusso resta leggibile.
+ */
 import { classifyRequest, stripLlmsSuffix } from "./llm/classifier";
 import { buildMarkdownPage } from "./llm/htmlToMarkdown";
 
 export default {
+	/**
+	 * Gestisce ogni richiesta in modo stateless.
+	 *
+	 * Browser e asset passano quasi invariati; crawler AI e debug route ricevono
+	 * una rappresentazione markdown della stessa pagina.
+	 */
 	async fetch(request: Request): Promise<Response> {
 		const classification = classifyRequest(request);
 		const requestUrl = new URL(request.url);
@@ -10,9 +23,11 @@ export default {
 			: requestUrl;
 		originUrl.searchParams.delete("debug");
 
+		// La URL debug viene rimappata alla pagina reale prima del fetch.
 		const originRequest = new Request(originUrl.toString(), request);
 		const originResponse = await fetch(originRequest);
 
+		// Log compatto: basta a capire perche' una richiesta e' stata trasformata.
 		console.log(
 			JSON.stringify({
 				path: requestUrl.pathname,
@@ -29,6 +44,7 @@ export default {
 
 		const contentType = originResponse.headers.get("content-type") ?? "";
 
+		// Non provo a convertire asset, JSON o file: la traccia riguarda pagine HTML.
 		if (!contentType.toLowerCase().includes("text/html")) {
 			return originResponse;
 		}

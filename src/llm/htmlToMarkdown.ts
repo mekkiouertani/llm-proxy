@@ -1,3 +1,10 @@
+/**
+ * Conversione HTML -> Markdown per la risposta destinata ai crawler AI.
+ *
+ * Il converter resta volutamente piccolo: estrae metadata e contenuto leggibile
+ * gia' presente nell'HTML, scartando elementi rumorosi come navigazione, footer,
+ * script e banner. Non esegue JavaScript e non fa crawling di altre pagine.
+ */
 export type PageMetadata = {
 	title: string;
 	url: string;
@@ -19,6 +26,13 @@ const COMPANY_BLOCK = [
 	"Cap.Soc. €13.825,26 (I.V.) - info@tuurbo.ai - tuurbo@pec.it",
 ].join("\n");
 
+/**
+ * Costruisce il documento markdown completo richiesto dalla traccia.
+ *
+ * Combina front matter testuale, blocco aziendale e contenuto convertito dalla
+ * pagina origine. Se il parser non trova testo leggibile, restituisce comunque
+ * una risposta valida e debuggabile.
+ */
 export function buildMarkdownPage(input: BuildMarkdownInput): string {
 	const metadata = extractMetadata(input);
 	const content = htmlToMarkdown(input.html);
@@ -39,6 +53,7 @@ export function buildMarkdownPage(input: BuildMarkdownInput): string {
 }
 
 function extractMetadata(input: BuildMarkdownInput): PageMetadata {
+	// Preferisco canonical e meta tag quando esistono, altrimenti uso fallback sicuri.
 	const canonical = findLinkHref(input.html, "canonical") ?? input.sourceUrl;
 	const title =
 		findMetaContent(input.html, "og:title") ??
@@ -63,6 +78,7 @@ function extractMetadata(input: BuildMarkdownInput): PageMetadata {
 
 function htmlToMarkdown(html: string): string {
 	const body = findTagInnerHtml(html, "body") ?? html;
+	// Primo passaggio: elimino blocchi che consumano token senza aggiungere valore.
 	let readableHtml = body
 		.replace(/<!--[\s\S]*?-->/g, " ")
 		.replace(/<(script|style|svg|noscript|template)[^>]*>[\s\S]*?<\/\1>/gi, " ")
@@ -72,6 +88,7 @@ function htmlToMarkdown(html: string): string {
 			" ",
 		);
 
+	// Secondo passaggio: converto i tag utili in sintassi markdown stabile.
 	readableHtml = readableHtml
 		.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, (_, text: string) => {
 			return `\n# ${cleanText(text)}\n`;
@@ -124,6 +141,7 @@ function findMetaContent(html: string, name: string): string | undefined {
 	const metaTags = html.match(/<meta\b[^>]*>/gi) ?? [];
 	const normalizedName = name.toLowerCase();
 
+	// Supporto sia `name` sia `property`, per coprire meta standard e Open Graph.
 	for (const tag of metaTags) {
 		const tagName = getAttribute(tag, "name")?.toLowerCase();
 		const property = getAttribute(tag, "property")?.toLowerCase();

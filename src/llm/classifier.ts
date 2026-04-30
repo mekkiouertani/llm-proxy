@@ -1,3 +1,11 @@
+/**
+ * Classificatore delle richieste in ingresso.
+ *
+ * Questo file decide se il Worker deve restituire la pagina originale oppure
+ * la versione markdown ottimizzata per crawler AI. La parte importante e'
+ * l'ordine delle priorita': prima i segnali espliciti di debug, poi i crawler
+ * riconoscibili, poi segnali header piu' deboli, infine pass-through.
+ */
 export type ClassificationReason =
 	| "debug-query"
 	| "debug-path"
@@ -27,10 +35,19 @@ const AI_USER_AGENT_PATTERNS = [
 
 const AI_PURPOSE_PATTERNS = ["ai", "llm", "preview"];
 
+/**
+ * Riconosce la rotta tecnica richiesta dalla traccia per test manuale.
+ */
 export function isLlmsPath(pathname: string): boolean {
 	return pathname === "/llms" || pathname.endsWith("/llms");
 }
 
+/**
+ * Converte `/pagina/llms` nella URL origine `/pagina`.
+ *
+ * La rotta `/llms` non deve essere inoltrata al sito come pagina reale:
+ * e' solo un alias di debug per forzare la risposta markdown.
+ */
 export function stripLlmsSuffix(url: URL): URL {
 	const originUrl = new URL(url);
 
@@ -43,6 +60,11 @@ export function stripLlmsSuffix(url: URL): URL {
 	return originUrl;
 }
 
+/**
+ * Classifica la request usando segnali ordinati per affidabilita'.
+ *
+ * @returns Decisione finale, motivo e segnale che ha causato il match.
+ */
 export function classifyRequest(request: Request): ClientClassification {
 	const url = new URL(request.url);
 	const debugValue = url.searchParams.get("debug")?.toLowerCase();
@@ -79,6 +101,7 @@ export function classifyRequest(request: Request): ClientClassification {
 		};
 	}
 
+	// Cluster header: utile quando un client dichiara lo scopo senza usare User-Agent noti.
 	const purposeHeaders = [
 		request.headers.get("purpose"),
 		request.headers.get("sec-purpose"),
@@ -101,6 +124,7 @@ export function classifyRequest(request: Request): ClientClassification {
 		};
 	}
 
+	// Fallback conservativo: se il client e' ambiguo, non altero l'esperienza browser.
 	return {
 		shouldRenderMarkdown: false,
 		reason: "browser-pass-through",
