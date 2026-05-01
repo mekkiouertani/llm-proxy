@@ -2,11 +2,21 @@
 
 Cloudflare Worker che agisce come middleware davanti al sito origine.
 
-Fa due cose:
+Tipo di progetto: backend serverless in Node.js e TypeScript, pensato per girare su Cloudflare Workers con KV, Browser Run e integrazioni esterne per SEO/LLM.
+
+Fa tre cose:
 
 - **Livello 1**: riconosce crawler AI o debug manuale e restituisce una versione markdown pulita della pagina.
 - **Livello 2**: arricchisce le normali pagine HTML con tag SEO generati usando DataForSEO, OpenAI/Claude e cache KV.
 - **Livello 3**: serve ai crawler HTML prerenderizzato con JavaScript gia' eseguito tramite Browser Run.
+
+## Consegne Completate
+
+- **Consegna 1**: l'obiettivo era offrire ai crawler AI una versione leggibile e leggera delle pagine. E' stata implementata con classificazione request, route di debug e conversione HTML -> Markdown pulita.
+- **Consegna 2**: l'obiettivo era generare metadata SEO dinamici usando dati SERP e regole condizionali. E' stata implementata con DataForSEO, prompt LLM, fallback provider/locali, validazione e cache KV.
+- **Consegna 3**: l'obiettivo era gestire pagine che dipendono da JavaScript prima della lettura da parte dei crawler. E' stata implementata con prerender tramite Browser Run, cache dedicata e fallback alla pagina originale in caso di errore.
+
+Le tre consegne sono state provate sul Worker con le route di debug dedicate e i risultati ottenuti sono quelli attesi.
 
 ## Worker Flow
 
@@ -51,6 +61,12 @@ KV cache
 ```
 
 I risultati vengono salvati in KV per evitare chiamate LLM a ogni richiesta. Se DataForSEO o gli LLM falliscono, la pagina viene servita comunque con metadata fallback.
+
+### Livello 3
+
+`src/prerender/prerenderService.ts` gestisce il prerender per crawler e debug, usando `PRERENDER_CACHE` per evitare render ripetuti e Browser Run solo quando serve.
+
+Se il prerender non produce HTML valido o fallisce, il Worker non blocca la richiesta e restituisce la pagina originale.
 
 ## File Principali
 

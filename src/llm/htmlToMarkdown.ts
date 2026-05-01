@@ -19,19 +19,12 @@ type BuildMarkdownInput = {
 	responseHeaders: Headers;
 };
 
-const COMPANY_BLOCK = [
-	"___________",
-	"www.tuurbo.ai | The results of a web & IT marketing team in one AI tool",
-	"Tuurbo S.r.l. P.IVA/VAT: IT06099510874 - Via A. Fleming SNC, Aci Sant'Antonio, 95025 Catania (CT), Italia",
-	"Cap.Soc. €13.825,26 (I.V.) - info@tuurbo.ai - tuurbo@pec.it",
-].join("\n");
-
 /**
  * Costruisce il documento markdown completo richiesto dalla traccia.
  *
- * Combina front matter testuale, blocco aziendale e contenuto convertito dalla
- * pagina origine. Se il parser non trova testo leggibile, restituisce comunque
- * una risposta valida e debuggabile.
+ * Combina front matter testuale e contenuto convertito dalla pagina origine.
+ * Se il parser non trova testo leggibile, restituisce comunque una risposta
+ * valida e debuggabile.
  */
 export function buildMarkdownPage(input: BuildMarkdownInput): string {
 	const metadata = extractMetadata(input);
@@ -44,8 +37,6 @@ export function buildMarkdownPage(input: BuildMarkdownInput): string {
 		`keyword: ${metadata.keyword}`,
 		`last-modified: ${metadata.lastModified}`,
 		"---",
-		"",
-		COMPANY_BLOCK,
 		"",
 		content || "_No readable content found._",
 		"",
