@@ -1,56 +1,85 @@
 # LLM Proxy Worker
 
-Cloudflare Worker che agisce come middleware davanti al sito origine.
+Backend serverless in Node.js e TypeScript basato su Cloudflare Workers.
 
-Tipo di progetto: backend serverless in Node.js e TypeScript, pensato per girare su Cloudflare Workers con KV, Browser Run e integrazioni esterne per SEO/LLM.
+Il progetto implementa un proxy HTTP davanti a un sito origine con tre obiettivi tecnici:
 
-Fa tre cose:
+- rendere le pagine piu' leggibili per crawler AI e strumenti LLM;
+- arricchire l'HTML con metadata SEO generati in modo controllato;
+- servire HTML prerenderizzato ai crawler quando la pagina dipende da JavaScript.
 
-- **Livello 1**: riconosce crawler AI o debug manuale e restituisce una versione markdown pulita della pagina.
-- **Livello 2**: arricchisce le normali pagine HTML con tag SEO generati usando DataForSEO, OpenAI/Claude e cache KV.
-- **Livello 3**: serve ai crawler HTML prerenderizzato con JavaScript gia' eseguito tramite Browser Run.
+La soluzione e' stateless: lo stato utile vive in Cloudflare KV, mentre secret, route e binding vengono configurati sull'infrastruttura Cloudflare.
 
-## Consegne Completate
-
-- **Consegna 1**: l'obiettivo era offrire ai crawler AI una versione leggibile e leggera delle pagine. E' stata implementata con classificazione request, route di debug e conversione HTML -> Markdown pulita.
-- **Consegna 2**: l'obiettivo era generare metadata SEO dinamici usando dati SERP e regole condizionali. E' stata implementata con DataForSEO, prompt LLM, fallback provider/locali, validazione e cache KV.
-- **Consegna 3**: l'obiettivo era gestire pagine che dipendono da JavaScript prima della lettura da parte dei crawler. E' stata implementata con prerender tramite Browser Run, cache dedicata e fallback alla pagina originale in caso di errore.
-
-Le tre consegne sono state provate sul Worker con le route di debug dedicate e i risultati ottenuti sono quelli attesi.
-
-## Worker Flow
+## Architettura
 
 ```text
 request
-  -> index.ts
-  -> /robots.txt? risposta diretta valida
+  -> src/index.ts
+  -> /robots.txt? risposta diretta
   -> classifier.ts
-  -> se debug LLM esplicito: htmlToMarkdown.ts
-  -> se crawler reale: prerenderService.ts
-  -> altrimenti: seoService.ts
+  -> debug LLM? markdown
+  -> crawler/prerender? HTML renderizzato
+  -> browser normale? HTML origine + metadata SEO
   -> response
 ```
 
-### Livello 1
-
-`src/llm/classifier.ts` decide se una richiesta deve ricevere markdown.
-
-Priorita':
-
-1. `?debug=llm`
-2. `{path}/llms`
-3. User-Agent AI noti
-4. header di purpose espliciti
-5. fallback: HTML normale
-
-Se il ramo markdown e' attivo, `src/llm/htmlToMarkdown.ts` rimuove rumore come nav, footer, cookie banner, script e style, poi converte titoli, paragrafi, liste, link e immagini in markdown.
-
-### Livello 2
-
-`src/seo/seoService.ts` gestisce il flusso SEO:
+Il Worker resta il punto di orchestrazione HTTP. La logica e' divisa per responsabilita':
 
 ```text
-KV cache
+src/llm/*        classificazione request e conversione HTML -> Markdown
+src/seo/*        metadata SEO, SERP data, prompt LLM, cache e fallback
+src/prerender/*  policy crawler, Browser Rendering e cache HTML
+src/index.ts     entrypoint e mapping delle risposte HTTP
+```
+
+## Step 1: Markdown Per Crawler AI
+
+Il primo step introduce una rappresentazione markdown delle pagine HTML. Serve a offrire ai crawler AI un contenuto piu' pulito, senza navigazione, script, cookie banner o markup poco utile.
+
+`src/llm/classifier.ts` decide quando attivare questo comportamento usando segnali espliciti e User-Agent noti:
+
+- query `?debug=llm`;
+- path tecnico `/llms`;
+- User-Agent di crawler AI;
+- header di purpose espliciti.
+
+`src/llm/htmlToMarkdown.ts` scarica la pagina origine, pulisce l'HTML e restituisce `text/markdown`.
+
+Esempio di verifica:
+
+```text
+GET https://<worker-url>/?debug=llm
+```
+
+Esempio di risultato:
+
+```markdown
+# Titolo pagina
+
+Descrizione principale del contenuto.
+
+## Sezione
+
+- Punto informativo
+- Link rilevante: [Nome link](https://example.com/path)
+```
+
+Header significativi:
+
+```text
+content-type: text/markdown; charset=utf-8
+x-llm-proxy-reason: debug-query
+vary: user-agent, purpose, sec-purpose, x-purpose, x-ai-purpose
+```
+
+## Step 2: Metadata SEO Dinamici
+
+Il secondo step arricchisce le pagine HTML con metadata SEO generati a partire da dati SERP, regole applicative e provider LLM.
+
+Il flusso e' gestito da `src/seo/seoService.ts`:
+
+```text
+SEO_CACHE
   -> DataForSEO se cache miss
   -> seoRules.ts
   -> promptBuilder.ts
@@ -60,48 +89,94 @@ KV cache
   -> htmlSeoInjector.ts
 ```
 
-I risultati vengono salvati in KV per evitare chiamate LLM a ogni richiesta. Se DataForSEO o gli LLM falliscono, la pagina viene servita comunque con metadata fallback.
+La cache KV evita chiamate esterne a ogni richiesta. Se DataForSEO o i provider LLM non rispondono, il Worker continua a servire la pagina usando metadata fallback.
 
-### Livello 3
-
-`src/prerender/prerenderService.ts` gestisce il prerender per crawler e debug, usando `PRERENDER_CACHE` per evitare render ripetuti e Browser Run solo quando serve.
-
-Se il prerender non produce HTML valido o fallisce, il Worker non blocca la richiesta e restituisce la pagina originale.
-
-## File Principali
+Esempio di verifica:
 
 ```text
-src/index.ts               entrypoint Worker
-src/llm/classifier.ts      classificazione crawler AI/debug/pass-through
-src/llm/htmlToMarkdown.ts  conversione HTML -> markdown
-src/prerender/*            Browser Run + KV per HTML prerenderizzato
-src/seo/seoService.ts      orchestrazione SEO, cache e fallback
-src/seo/seoRules.ts        regole condizionali della consegna 2
-src/seo/promptBuilder.ts   prompt dinamico per LLM
-src/seo/htmlSeoInjector.ts iniezione title, meta, OG, canonical, JSON-LD
-src/seo/dataForSeoClient.ts client DataForSEO
-src/seo/llmClients.ts      client OpenAI e Claude
+GET https://<worker-url>/?debug=seo
 ```
 
-## Deploy
+Esempio di risultato JSON:
 
-```bash
-npm install
-npx wrangler deploy
+```json
+{
+  "debug": "seo",
+  "applied": true,
+  "cacheHit": false,
+  "metadata": {
+    "title": "Titolo SEO generato",
+    "description": "Descrizione ottimizzata per intento e SERP.",
+    "canonical": "https://example.com/"
+  },
+  "providerStatus": {
+    "primary": "success",
+    "fallback": "not-used"
+  }
+}
 ```
 
-Verifica prima del deploy:
+Esempio di HTML finale:
 
-```bash
-npx tsc --noEmit
-npx wrangler deploy --dry-run
+```html
+<title>Titolo SEO generato</title>
+<meta name="description" content="Descrizione ottimizzata per intento e SERP.">
+<meta property="og:title" content="Titolo SEO generato">
+<link rel="canonical" href="https://example.com/">
+<script type="application/ld+json">{ "...": "..." }</script>
 ```
 
-## Secrets E Variabili
+## Step 3: Prerender Per Crawler
 
-In locale copia `.dev.vars.example` in `.dev.vars`.
+Il terzo step gestisce le pagine che richiedono JavaScript per mostrare contenuto completo. Per crawler e debug esplicito, il Worker usa Cloudflare Browser Rendering tramite il binding `BROWSER`.
 
-Secrets Cloudflare:
+`src/prerender/crawlerPolicy.ts` decide se applicare il prerender. `src/prerender/prerenderService.ts` controlla prima `PRERENDER_CACHE`; in caso di cache miss usa Browser Rendering, salva l'HTML prodotto e lo restituisce.
+
+Esempio di verifica:
+
+```text
+GET https://<worker-url>/?debug=prerender
+```
+
+Esempio di risultato:
+
+```json
+{
+  "debug": "prerender",
+  "applied": true,
+  "status": "rendered",
+  "cacheHit": false,
+  "reason": "debug-query",
+  "hasBrowserBinding": true,
+  "hasPrerenderCache": true
+}
+```
+
+Se il render fallisce, va in timeout o il binding non e' disponibile, la richiesta non viene bloccata: il Worker torna al flusso standard e serve la pagina origine.
+
+## Configurazione Cloudflare
+
+Per far funzionare il progetto in ambiente Cloudflare non basta il deploy del codice: il Worker deve essere collegato a una route, ai binding KV, al binding Browser Rendering e ai secret necessari.
+
+Passaggi operativi:
+
+1. Creare o selezionare un Worker Cloudflare.
+2. Collegare una route al dominio o sottodominio da proteggere, ad esempio `https://example.com/*`.
+3. Creare due namespace KV e associarli ai binding `SEO_CACHE` e `PRERENDER_CACHE`.
+4. Abilitare Cloudflare Browser Rendering e collegarlo al binding `BROWSER`.
+5. Inserire i secret per DataForSEO e provider AI.
+6. Configurare le variabili non segrete in `wrangler.jsonc`.
+7. Eseguire il deploy con Wrangler.
+
+Binding richiesti:
+
+```text
+SEO_CACHE
+PRERENDER_CACHE
+BROWSER
+```
+
+Secret richiesti:
 
 ```bash
 npx wrangler secret put DATAFORSEO_LOGIN
@@ -110,20 +185,9 @@ npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put ANTHROPIC_API_KEY
 ```
 
-Binding KV richiesto:
+Esempio: `OPENAI_API_KEY` e `ANTHROPIC_API_KEY` non devono stare nel repository. Vanno inseriti come secret del Worker, cosi' il codice puo' leggerli da `env` senza esporli.
 
-```text
-SEO_CACHE
-PRERENDER_CACHE
-```
-
-Binding Browser Run richiesto:
-
-```text
-BROWSER
-```
-
-Variabili non segrete sono in `wrangler.jsonc`:
+Variabili non segrete configurate in `wrangler.jsonc`:
 
 ```text
 SEO_CACHE_TTL_SECONDS
@@ -136,37 +200,73 @@ OPENAI_MODEL
 ANTHROPIC_MODEL
 ```
 
-## Test
+## Setup Locale
 
-Livello 1:
+Installazione:
 
-```text
-/?debug=llm
-/llms
+```bash
+npm install
 ```
 
-Livello 2:
+Ambiente locale:
 
-```text
-/?debug=seo&v=test-1
-/?debug=seo-ping
+```bash
+cp .dev.vars.example .dev.vars
 ```
 
-Livello 3:
+Avvio in sviluppo:
 
-```text
-/?debug=prerender
+```bash
+npm run dev
 ```
 
-Con un crawler reale o `?debug=prerender`, il Worker prova prima `PRERENDER_CACHE`; se manca cache usa Browser Run, salva HTML renderizzato e lo restituisce. Se il render fallisce, torna alla pagina originale.
+Verifica TypeScript:
 
-Controllo HTML:
-
-```text
-view-source:https://www.tuurbo-trainer.com/
+```bash
+npx tsc --noEmit
 ```
 
-Cercare:
+Deploy:
+
+```bash
+npm run deploy
+```
+
+Dry run prima del deploy:
+
+```bash
+npx wrangler deploy --dry-run
+```
+
+## Route Di Debug
+
+Markdown per crawler AI:
+
+```text
+https://<worker-url>/?debug=llm
+https://<worker-url>/llms
+```
+
+SEO e provider:
+
+```text
+https://<worker-url>/?debug=seo
+https://<worker-url>/?debug=seo-ping
+```
+
+Prerender:
+
+```text
+https://<worker-url>/?debug=prerender
+```
+
+Controllo HTML finale:
+
+```text
+view-source:https://<worker-url>/
+```
+
+Elementi da cercare:
 
 ```html
 <title>
@@ -176,10 +276,28 @@ Cercare:
 <script type="application/ld+json">
 ```
 
-## Note
+## File Principali
 
-- Il Worker e' stateless: lo stato SEO generato vive in KV.
-- DataForSEO guida il prompt con keyword, intento, volume, CPC, competitor e SERP feature.
-- OpenAI e' il provider primario; Claude e' fallback.
-- Browser Run viene usato solo per crawler/cache miss, mai per utenti normali.
-- `/robots.txt` viene servito dal Worker con direttive standard per evitare errori PageSpeed.
+```text
+src/index.ts                 entrypoint Worker e orchestrazione HTTP
+src/env.ts                   tipizzazione delle variabili ambiente
+src/llm/classifier.ts        classificazione crawler AI/debug/pass-through
+src/llm/htmlToMarkdown.ts    conversione HTML -> Markdown
+src/prerender/crawlerPolicy.ts policy di attivazione prerender
+src/prerender/prerenderService.ts cache e rendering HTML
+src/seo/seoService.ts        orchestrazione SEO, cache e fallback
+src/seo/seoRules.ts          regole condizionali SEO
+src/seo/promptBuilder.ts     prompt dinamico per LLM
+src/seo/htmlSeoInjector.ts   iniezione metadata nell'HTML
+src/seo/dataForSeoClient.ts  client DataForSEO
+src/seo/llmClients.ts        client OpenAI e Claude
+```
+
+## Note Tecniche
+
+- Il Worker e' stateless: cache e risultati generati vivono in KV.
+- Browser Rendering viene usato solo per crawler/cache miss o debug esplicito.
+- Gli utenti normali non pagano il costo del prerender.
+- Il flusso SEO ha fallback progressivi: cache, provider primario, provider secondario, fallback locale.
+- `/robots.txt` viene servito direttamente dal Worker per garantire una risposta stabile.
+- Le route di debug rendono verificabili classificazione, binding, provider, cache e output generato.
